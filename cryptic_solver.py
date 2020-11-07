@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[211]:
 
 
 import numpy as np
@@ -291,6 +291,28 @@ class SudokuSolver:
                     return result
         return
 
+    def diag(self, num: int, row: int, col: int):
+        """
+        Try to insert a number in the grid and print result of each test. Used for diagnostics.
+        
+        Parameters
+        ----------
+        num: int
+            Number to test, between 1 and 9
+        row: int
+            Row to insert num in, between 0 and 8
+        col: int
+            Col to insert num in, between 0 and 8
+        """
+        for cond in [
+            RookCondition,
+            BlockCondition,
+            KingCondition,
+            KnightCondition,
+            ConsecutiveCondition,
+        ]:
+            print(cond.__name__, cond().test(self.grid, num, row, col))
+
 
 class StandardSudokuSolver(SudokuSolver):
     """Standard sudoku solver"""
@@ -333,30 +355,8 @@ class CrypticSolver(SudokuSolver):
             ),
         )
 
-    def diag(self, num: int, row: int, col: int):
-        """
-        Try to insert a number in the grid and print result of each test. Used for diagnostics.
-        
-        Parameters
-        ----------
-        num: int
-            Number to test, between 1 and 9
-        row: int
-            Row to insert num in, between 0 and 8
-        col: int
-            Col to insert num in, between 0 and 8
-        """
-        for cond in [
-            RookCondition,
-            BlockCondition,
-            KingCondition,
-            KnightCondition,
-            ConsecutiveCondition,
-        ]:
-            print(cond.__name__, cond().test(self.grid, num, row, col))
 
-
-# In[2]:
+# In[212]:
 
 
 cs = CrypticSolver(
