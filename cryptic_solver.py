@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[211]:
+# In[1]:
 
 
 import numpy as np
+import pandas as pd
 import typing
 from copy import deepcopy
 import matplotlib.pyplot as plt
+import time
 
 
 def is_interactive():
@@ -54,8 +56,8 @@ class RookCondition(SudokuCondition):
 
     def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
         try:
-            assert num not in grid[row, :]
-            assert num not in grid[:, col]
+            assert num not in grid[row, :col] and num not in grid[row, col + 1 :]
+            assert num not in grid[:row, col] and num not in grid[row + 1 :, col]
         except AssertionError:
             return False
         else:
@@ -66,6 +68,8 @@ class BlockCondition(SudokuCondition):
     """Make sure the same number does not exist in the same 3x3 block"""
 
     def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
+        grid = grid.copy()
+        grid[row, col] = 0
         block_row = (row // 3) * 3
         block_col = (col // 3) * 3
         return num not in grid[block_row : block_row + 3, block_col : block_col + 3]
@@ -170,7 +174,7 @@ class SudokuSolver:
     ) -> list:
         """
         Compute all possiblities for a particular row and col
-        
+
         Parameters
         ----------
         grid: np.ndarray
@@ -223,11 +227,64 @@ class SudokuSolver:
                 for row in range(9)
             ]
 
-    def solve(
-        self, grid: np.ndarray = None, possibilities_list: list = None
-    ) -> np.ndarray:
+    def check_grid(self, grid: np.array) -> bool:
+        return all(
+            (
+                True
+                if grid[row, col] == 0
+                else self.condition(grid, grid[row, col], row, col)
+                for row in range(9)
+                for col in range(9)
+            )
+        )
+
+    def possible_cols(self, grid: np.array, num: int, row: int) -> list:
+        return [
+            col
+            for col in range(9)
+            if grid[row, col] == 0 and self.condition(grid, num, row, col)
+        ]
+
+    def _solve(self, grid: np.ndarray = None) -> np.ndarray:
+        # Make sure we don't mutate the input
+        if grid is None:
+            grid = self.grid.copy()
+        else:
+            grid = grid.copy()
+        clear_output(wait=True)
+        print(grid)
+        nums, counts = np.unique(grid, return_counts=True)
+        if not hasattr(self, "num_order"):
+            num_order = sorted(range(len(nums)), key=counts.__getitem__, reverse=True)
+            num_order = [nums[x] for x in num_order]
+            num_order = num_order + [x for x in range(10) if x not in num_order]
+            num_order = [x for x in num_order if x != 0]
+            self.num_order = num_order
+        for test_num in self.num_order:
+            if np.count_nonzero(grid.copy() == test_num) < 9:
+                for row in range(10):
+                    if test_num in grid[row, :]:
+                        continue
+                    cols = self.possible_cols(grid, test_num, row)
+                    if len(cols) == 0:
+                        return
+                    else:
+                        for col in cols:
+                            grid_new = grid.copy()
+                            grid_new[row, col] = test_num
+                            result = self._solve(grid_new)
+                            if result is not None:
+                                return result
+                            else:
+                                continue
+                        return
+        if self.check_grid(grid):
+            return grid
+
+    def solve(self, grid: np.ndarray = None) -> np.ndarray:
         """
-        Recursively solve sudoku using backtracking and constraint programming
+        Recursively solve sudoku by filling the numbers used in the puzzle first, using
+        backtracking and constraint programming
         
         Parameters
         ----------
@@ -236,60 +293,17 @@ class SudokuSolver:
             If unspecified, will use self.grid
         possibilities list: list
             List of possibilities, should be list of lists of lists, see possibilities()
+            
+        Returns
+        -------
+        np.ndarray
+            Filled Grid
         """
-        # Make sure we don't mutate the input
-        if grid is None:
-            grid = self.grid.copy()
+        result = self._solve(grid)
+        if result is None:
+            raise "No solution"
         else:
-            grid = grid.copy()
-        # Compute all possibilities, using what we already know
-        possibilities_list = self.possibilities(grid, possibilities_list)
-        # Compute number of possiblities for each cell. 99 means we already filled that cell
-        poss_num = np.array(
-            [
-                [
-                    99
-                    if possibilities_list[row][col] is None
-                    else len(possibilities_list[row][col])
-                    for col in range(9)
-                ]
-                for row in range(9)
-            ]
-        )
-        # Choose a cell to try that has the least number of possibilities
-        search_x, search_y = np.unravel_index(np.argmin(poss_num), poss_num.shape)
-        # Iterate over all possibilities for our search posdition
-        for num in possibilities_list[search_x][search_y]:
-            grid[search_x, search_y] = num
-            # Clear previous output and print the grid
-            clear_output(wait=True)
-            print(grid)
-            # Recompute possibilities
-            poss_check = self.possibilities(grid, possibilities_list)
-            poss_check_num = np.array(
-                [
-                    [
-                        99
-                        if poss_check[row][col] is None
-                        else len(poss_check[row][col])
-                        for col in range(9)
-                    ]
-                    for row in range(9)
-                ]
-            )
-            if poss_check_num.min() == 0:  # we have an unfillable cell
-                continue  # try the next number
-            elif grid.min() == 1:  # we succeeded!
-                self.grid = grid
-                return grid
-            else:  # so far so good, recursively try another cell
-                result = self.solve(grid, poss_check)
-                if (
-                    result is not None
-                ):  # if a solution is returned, keep return it recursively
-                    self.grid = result
-                    return result
-        return
+            return result
 
     def diag(self, num: int, row: int, col: int):
         """
@@ -356,7 +370,7 @@ class CrypticSolver(SudokuSolver):
         )
 
 
-# In[212]:
+# In[2]:
 
 
 cs = CrypticSolver(
@@ -374,5 +388,5 @@ cs = CrypticSolver(
         ]
     )
 )
-cs.solve()
 
+cs.solve()
