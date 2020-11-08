@@ -10,6 +10,7 @@ import time
 from itertools import combinations, permutations
 from random import shuffle
 
+
 def is_interactive():
     import __main__ as main
 
@@ -190,9 +191,7 @@ class SudokuSolver:
         if possibilities_list is None:
             possibilities_list = range(1, 10)
         return [
-            num
-            for num in possibilities_list
-            if self.condition(grid, num, row, col)
+            num for num in possibilities_list if self.condition(grid, num, row, col)
         ]
 
     def possibilities(self, grid: np.array, possibilities_list: list = None) -> list:
@@ -327,7 +326,7 @@ class SudokuSolver:
             print(cond.__name__, cond().test(self.grid, num, row, col))
 
 
-class StandardSudokuSolver(SudokuSolver):
+class StandardSolver(SudokuSolver):
     """Standard sudoku solver"""
 
     def __init__(self, grid: np.array):
@@ -524,7 +523,6 @@ class SandwichSolver(SudokuSolver):
             print(grid)
         nums, counts = np.unique(grid, return_counts=True)
         num_order = sorted(range(len(nums)), key=counts.__getitem__, reverse=True)
-
         num_order = [nums[x] for x in num_order]
         num_order = num_order + [x for x in range(10) if x not in num_order]
         num_order = [x for x in num_order if x != 0]
@@ -703,7 +701,8 @@ class ThermometerCondition(SudokuCondition):
                     return False
         return True
 
-def sudoku_update(grid, possibilities_list, row, col, paths):
+
+def sudoku_update(grid, possibilities_list, row, col, paths=[]):
     num = grid[row, col]
     for row2 in range(9):
         for col2 in range(9):
@@ -712,7 +711,9 @@ def sudoku_update(grid, possibilities_list, row, col, paths):
             if row == row2 and col == col2:
                 possibilities_list[row][col] = None
             elif col2 == col or row2 == row:
-                possibilities_list[row2][col2] = [x for x in possibilities_list[row2][col2] if x!= num]
+                possibilities_list[row2][col2] = [
+                    x for x in possibilities_list[row2][col2] if x != num
+                ]
     for path in paths:
         if (row, col) not in path:
             continue
@@ -722,7 +723,10 @@ def sudoku_update(grid, possibilities_list, row, col, paths):
             if possibilities_list[row2][col2] is None:
                 continue
             else:
-                possibilities_list[row2][col2] = [x for x in possibilities_list[row2][col2] if x!= num]
+                possibilities_list[row2][col2] = [
+                    x for x in possibilities_list[row2][col2] if x != num
+                ]
+
 
 class ThermometerSolver(SudokuSolver):
     """
@@ -740,7 +744,11 @@ class ThermometerSolver(SudokuSolver):
             List of list of coordinates that should have increasing numbers
         """
         # initialize using standard ruleset
-        self.paths = sorted(paths, key=len)
+        def comb(x):
+            length = len(x)
+            return min(length, 9-length)
+
+        self.paths = sorted(paths, key=comb)
         super().__init__(
             grid,
             ComboCondition(
@@ -782,19 +790,24 @@ class ThermometerSolver(SudokuSolver):
         if verbose:
             clear_output(wait=True)
             print(grid)
+        possibilities_list = self.possibilities(grid, possibilities_list)
         if min([len(x) for x in self.possibilities(grid)]) == 0:
             return False
-        possibilities_list = self.possibilities(grid, possibilities_list)
-        if np.count_nonzero(grid) <= 10:
-            for row in range(9):
-                for col in range(9):
-                    if grid[row, col] > 0:
-                        continue
-                    if len(possibilities_list[row][col]) == 1:
-                        grid[row, col] = possibilities_list[row][col][0]
-                        possibilities_list[row][col] = None
-                    elif len(possibilities_list[row][col]) == 0:
+        for row in range(9):
+            for col in range(9):
+                if grid[row, col] > 0:
+                    continue
+                if len(possibilities_list[row][col]) == 1:
+                    grid_new = grid.copy()
+                    grid_new[row, col] = possibilities_list[row][col][0]
+                    result = self._solve_thermometer(grid_new, possibilities_list)
+                    if result is not None:
+                        return result
+                    else:
                         return
+                elif len(possibilities_list[row][col]) == 0:
+                    return
+        if np.count_nonzero(grid) <= 15:
             for row in range(9):
                 for col in range(9):
                     if grid[row, col] > 0:
@@ -807,10 +820,12 @@ class ThermometerSolver(SudokuSolver):
                         for num in p_list:
                             grid_new = grid.copy()
                             grid_new[row, col] = num
-                            result = self._solve_thermometer(grid_new, deepcopy(p_list))
+                            result = self._solve_thermometer(
+                                grid_new, deepcopy(possibilities_list)
+                            )
                             if result is not None:
                                 return result
-                
+
         for path in self.paths:
             path_nums = [grid[row, col] for row, col in path]
             if min(path_nums) > 0:
@@ -834,12 +849,22 @@ class ThermometerSolver(SudokuSolver):
                                     continue
                                 if len(cand) == 1:
                                     grid[row2, col2] == cand[0]
-                                    sudoku_update(grid, possibilities_list_new, row2, col2, self.paths)
+                                    sudoku_update(
+                                        grid,
+                                        possibilities_list_new,
+                                        row2,
+                                        col2,
+                                        self.paths,
+                                    )
                                 elif len(cand) == 0:
                                     raise AssertionError
                     except AssertionError:
                         continue
-                    result = self._solve_thermometer(grid_new, verbose=verbose, possibilities_list=possibilities_list_new)
+                    result = self._solve_thermometer(
+                        grid_new,
+                        verbose=verbose,
+                        possibilities_list=possibilities_list_new,
+                    )
                     if result is not None:
                         return result
                     else:
@@ -854,7 +879,7 @@ class ThermometerSolver(SudokuSolver):
                     return
         if not self.check_grid(grid):
             return
-        result = StandardSudokuSolver(grid)._solve(verbose=verbose)
+        result = StandardSolver(grid)._solve(verbose=verbose)
         if result is not None:
             return result
         else:
