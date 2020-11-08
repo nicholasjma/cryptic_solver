@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
 import numpy as np
 import pandas as pd
 import typing
@@ -11,7 +8,7 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 import time
 from itertools import combinations, permutations
-
+from random import shuffle
 
 def is_interactive():
     import __main__ as main
@@ -139,80 +136,6 @@ class ConsecutiveCondition(SudokuCondition):
         )
 
 
-class ThermometerCondition(SudokuCondition):
-    def __init__(self, paths: list):
-        """
-        Parameters
-        ----------
-        paths: list of list of tuples
-            List of list of coordinates that should have increasing numbers
-        """
-        self.paths = paths
-
-    def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
-        for path in self.paths:
-            nums = [grid[row, col] for row, col in path if grid[row, col] > 0]
-            if not np.all(np.diff(nums) > 0):
-                return False
-        return True
-
-
-class SandwichCondition(SudokuCondition):
-    def __init__(self, row_sums: np.array, col_sums: np.array):
-        """
-        Parameters
-        ----------
-        row_sums: np.ndarray
-            array of sum of numbers sandwiched between 1 and 9 in each row
-        col_sums: np.ndarray
-            array of sum of numbers sandwiched between 1 and 9 in each column
-        """
-        self.row_sums = row_sums
-        self.col_sums = col_sums
-
-    def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
-        for grid_iter, rc_sum in zip([grid, grid.T], [self.row_sums, self.col_sums]):
-            for row, row_sum in enumerate(rc_sum):
-                one_pos = np.where(grid_iter[row, :] == 1)[0]
-                nine_pos = np.where(grid_iter[row, :] == 9)[0]
-                if len(one_pos) == 0 or len(nine_pos) == 0:
-                    continue
-                start = min(one_pos, nine_pos)[0] + 1
-                stop = max(one_pos, nine_pos)[0]
-                extent_checks = [
-                    (0, 1, 0),
-                    (1, 5, 1),
-                    (5, 9, 2),
-                    (9, 14, 3),
-                    (14, 20, 4),
-                    (20, 27, 5),
-                    (27, 35, 6),
-                ]
-                # check that 1 and 9 aren't too far apart
-                for min_sum, max_sum, max_len in extent_checks:
-                    if (
-                        row_sum >= min_sum
-                        and row_sum < max_sum
-                        and stop - start > max_len
-                    ):
-                        return False
-                nums = grid_iter[row, start:stop]
-                if start == stop:  # 1 and 9 adjacent
-                    if row_sum > 0:
-                        return False
-                    else:
-                        continue
-                elif nums.min() == 0:  # 1 and 9 present, holes between
-                    if nums.sum() > row_sum:  # sum is to high
-                        return False
-                    else:  # sum is okay thusfar
-                        continue
-                else:  # 1 and 9 present, no holes between
-                    if nums.sum() != row_sum:
-                        return False
-        return True
-
-
 class ComboCondition(SudokuCondition):
     """Combine multiple SudokuCondition classses into one"""
 
@@ -269,7 +192,7 @@ class SudokuSolver:
         return [
             num
             for num in possibilities_list
-            if self.condition.test(grid, num, row, col)
+            if self.condition(grid, num, row, col)
         ]
 
     def possibilities(self, grid: np.array, possibilities_list: list = None) -> list:
@@ -444,6 +367,62 @@ class CrypticSolver(SudokuSolver):
                 ]
             ),
         )
+
+
+class SandwichCondition(SudokuCondition):
+    def __init__(self, row_sums: np.array, col_sums: np.array):
+        """
+        Parameters
+        ----------
+        row_sums: np.ndarray
+            array of sum of numbers sandwiched between 1 and 9 in each row
+        col_sums: np.ndarray
+            array of sum of numbers sandwiched between 1 and 9 in each column
+        """
+        self.row_sums = row_sums
+        self.col_sums = col_sums
+
+    def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
+        for grid_iter, rc_sum in zip([grid, grid.T], [self.row_sums, self.col_sums]):
+            for row, row_sum in enumerate(rc_sum):
+                one_pos = np.where(grid_iter[row, :] == 1)[0]
+                nine_pos = np.where(grid_iter[row, :] == 9)[0]
+                if len(one_pos) == 0 or len(nine_pos) == 0:
+                    continue
+                start = min(one_pos, nine_pos)[0] + 1
+                stop = max(one_pos, nine_pos)[0]
+                extent_checks = [
+                    (0, 1, 0),
+                    (1, 5, 1),
+                    (5, 9, 2),
+                    (9, 14, 3),
+                    (14, 20, 4),
+                    (20, 27, 5),
+                    (27, 35, 6),
+                ]
+                # check that 1 and 9 aren't too far apart
+                for min_sum, max_sum, max_len in extent_checks:
+                    if (
+                        row_sum >= min_sum
+                        and row_sum < max_sum
+                        and stop - start > max_len
+                    ):
+                        return False
+                nums = grid_iter[row, start:stop]
+                if start == stop:  # 1 and 9 adjacent
+                    if row_sum > 0:
+                        return False
+                    else:
+                        continue
+                elif nums.min() == 0:  # 1 and 9 present, holes between
+                    if nums.sum() > row_sum:  # sum is to high
+                        return False
+                    else:  # sum is okay thusfar
+                        continue
+                else:  # 1 and 9 present, no holes between
+                    if nums.sum() != row_sum:
+                        return False
+        return True
 
 
 SANDWICH_COMBOS = dict()
@@ -688,47 +667,195 @@ class SandwichSolver(SudokuSolver):
             return grid
 
 
-# In[2]:
+class ThermometerCondition(SudokuCondition):
+    def __init__(self, paths: list):
+        """
+        Parameters
+        ----------
+        paths: list of list of tuples
+            List of list of coordinates that should have increasing numbers
+        """
+        self.paths = sorted(paths, key=len, reverse=True)
 
+    def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
+        grid = grid.copy()
+        grid[row, col] = num
+        for path in self.paths:
+            nums = [grid[row, col] for row, col in path if grid[row, col] > 0]
+            if not np.all(np.diff(nums) > 0):
+                return False
+        # now check for numberse that are too close together
+        for path in self.paths:
+            position_dict = {
+                grid[row, col]: idx
+                for idx, (row, col) in enumerate(path)
+                if grid[row, col] != 0
+            }
+            for test_num, idx in position_dict.items():
+                if test_num < idx + 1 or 9 - test_num < len(path) - idx - 1:
+                    return False
+            if len(position_dict) < 2:
+                continue
+            position_keys = sorted(position_dict.keys())
+            for idx in range(len(position_keys) - 1):
+                p, q = position_keys[idx], position_keys[idx + 1]
+                if position_dict[q] - position_dict[p] > q - p:
+                    return False
+        return True
 
-cs = CrypticSolver(
-    np.array(
-        [
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 1, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 2, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        ]
-    )
-)
+def sudoku_update(grid, possibilities_list, row, col, paths):
+    num = grid[row, col]
+    for row2 in range(9):
+        for col2 in range(9):
+            if possibilities_list[row2][col2] is None:
+                continue
+            if row == row2 and col == col2:
+                possibilities_list[row][col] = None
+            elif col2 == col or row2 == row:
+                possibilities_list[row2][col2] = [x for x in possibilities_list[row2][col2] if x!= num]
+    for path in paths:
+        if (row, col) not in path:
+            continue
+        for row2, col2 in path:
+            if row == row2 and col == col2:
+                continue
+            if possibilities_list[row2][col2] is None:
+                continue
+            else:
+                possibilities_list[row2][col2] = [x for x in possibilities_list[row2][col2] if x!= num]
 
-cs.solve()
+class ThermometerSolver(SudokuSolver):
+    """
+    Thermometer sudoku solver. See
+    https://www.gmpuzzles.com/blog/sudoku-rules-and-info/thermo-sudoku-rules-and-info/
+    """
 
+    def __init__(self, grid: np.array, paths: list):
+        """
+        Parameters
+        ----------
+        grid: np.ndarray
+            Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries
+        paths: list of list of tuples
+            List of list of coordinates that should have increasing numbers
+        """
+        # initialize using standard ruleset
+        self.paths = sorted(paths, key=len)
+        super().__init__(
+            grid,
+            ComboCondition(
+                [RookCondition, BlockCondition, ThermometerCondition(paths)]
+            ),
+        )
 
-# In[3]:
+    def solve(self, grid: np.ndarray = None, verbose: bool = True) -> np.ndarray:
+        """
+        Recursively solve sudoku by filling the numbers used in the puzzle first, using
+        backtracking and constraint programming
+        
+        Parameters
+        ----------
+        grid: np.ndarray, optional
+            Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries.
+            If unspecified, will use self.grid
+        verbose: bool, default=True
+            Whether to print grid while solving
+        Returns
+        -------
+        np.ndarray
+            Filled Grid
+        """
+        result = self._solve_thermometer(grid, verbose=verbose)
+        if result is None:
+            raise ValueError("No solution")
+        else:
+            return result
 
-
-cs = SandwichSolver(
-    np.array(
-        [
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 9, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 6, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 1, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 2, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 7, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        ]
-    ),
-    row_sums=np.array([2, 8, 26, 29, 0, 23, 15, 2, 4]),
-    col_sums=np.array([10, 23, 23, 23, 14, 12, 21, 0, 0]),
-)
-cs.solve()
-
+    def _solve_thermometer(
+        self, grid: np.ndarray = None, verbose: bool = True, possibilities_list=None
+    ) -> np.ndarray:
+        # Make sure we don't mutate the input
+        if grid is None:
+            grid = self.grid.copy()
+        else:
+            grid = grid.copy()
+        if verbose:
+            clear_output(wait=True)
+            print(grid)
+        if min([len(x) for x in self.possibilities(grid)]) == 0:
+            return False
+        possibilities_list = self.possibilities(grid, possibilities_list)
+        if np.count_nonzero(grid) <= 10:
+            for row in range(9):
+                for col in range(9):
+                    if grid[row, col] > 0:
+                        continue
+                    if len(possibilities_list[row][col]) == 1:
+                        grid[row, col] = possibilities_list[row][col][0]
+                        possibilities_list[row][col] = None
+                    elif len(possibilities_list[row][col]) == 0:
+                        return
+            for row in range(9):
+                for col in range(9):
+                    if grid[row, col] > 0:
+                        continue
+                    p_list = possibilities_list[row][col]
+                    if len(p_list) == 1:
+                        grid[row, col] = p_list[0]
+                        p_list[row][col] = None
+                    elif len(p_list) <= 2 and len(p_list) > 0:
+                        for num in p_list:
+                            grid_new = grid.copy()
+                            grid_new[row, col] = num
+                            result = self._solve_thermometer(grid_new, deepcopy(p_list))
+                            if result is not None:
+                                return result
+                
+        for path in self.paths:
+            path_nums = [grid[row, col] for row, col in path]
+            if min(path_nums) > 0:
+                continue
+            for row, col in path:
+                if grid[row, col] > 0:
+                    continue
+                candidates = possibilities_list[row][col]
+                if len(candidates) == 0:
+                    return
+                for num in candidates:
+                    grid_new = grid.copy()
+                    grid_new[row, col] = num
+                    possibilities_list_new = deepcopy(possibilities_list)
+                    sudoku_update(grid, possibilities_list_new, row, col, self.paths)
+                    try:
+                        for row2 in range(9):
+                            for col2 in range(9):
+                                cand = possibilities_list_new[row2][col2]
+                                if cand is None:
+                                    continue
+                                if len(cand) == 1:
+                                    grid[row2, col2] == cand[0]
+                                    sudoku_update(grid, possibilities_list_new, row2, col2, self.paths)
+                                elif len(cand) == 0:
+                                    raise AssertionError
+                    except AssertionError:
+                        continue
+                    result = self._solve_thermometer(grid_new, verbose=verbose, possibilities_list=possibilities_list_new)
+                    if result is not None:
+                        return result
+                    else:
+                        continue
+                return
+        for row2 in range(9):
+            for col2 in range(9):
+                cand = self.candidates(grid, row2, col2)
+                if len(cand) == 1:
+                    grid[row2, col2] == cand[0]
+                elif len(cand) == 0:
+                    return
+        if not self.check_grid(grid):
+            return
+        result = StandardSudokuSolver(grid)._solve(verbose=verbose)
+        if result is not None:
+            return result
+        else:
+            return
