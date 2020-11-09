@@ -7,8 +7,9 @@ import typing
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import time
-from itertools import combinations, permutations
+from itertools import combinations, permutations, repeat, product
 from random import shuffle
+from datetime import datetime, timedelta
 
 
 def is_interactive():
@@ -23,6 +24,24 @@ else:
     # don't bother without put clearing if we're not in IPython
     def clear_output(*args, **kwargs):
         return
+    
+
+def split_path(path):
+    path_bookend = np.concatenate([[999], path, [999]])
+    starts = np.where(np.diff((path_bookend != 0).astype(int)) == -1)[0]
+    ends = np.where(np.diff((path_bookend != 0).astype(int)) == 1)[0]
+    segments = []
+    for start, end in zip(starts, ends):
+        if start > 0:
+            left = path[start - 1] + 1
+        else:
+            left = 1
+        if end == len(path):
+            right = 10
+        else:
+            right = path[end]
+        segments.append(zip(repeat(slice(start, end)), list(combinations(range(left, right), end - start))))
+    return list(product(*segments))
 
 
 class SudokuCondition:
@@ -156,15 +175,23 @@ class ComboCondition(SudokuCondition):
             return True
 
 
-def get_num_order(grid: np.ndarray) -> list:
+def get_num_order(grid: np.ndarray, partial: bool = False) -> list:
     nums, counts = np.unique(grid, return_counts=True)
     num_order = sorted(range(len(nums)), key=counts.__getitem__, reverse=True)
     num_order = [nums[x] for x in num_order]
     # add numbers not in the grid and filter 0
-    num_order = [x for x in num_order if x != 0] + [
-        x for x in range(1, 10) if x not in num_order
-    ]
+    num_order = [x for x in num_order if x != 0]
+    if not partial:
+        num_order += [x for x in range(1, 10) if x not in num_order]
     return num_order
+
+
+def deduce(arr: np.array) -> np.array:
+    if np.count_nonzero(arr) == 8:
+        missing_no = (set(range(1, 10)) - set(arr)).pop()
+        arr[arr == 0] = missing_no
+        return True
+    return False
 
 
 class SudokuSolver:
@@ -181,9 +208,10 @@ class SudokuSolver:
         """
         self.grid = grid
         self.condition = condition
+        self.display_time = None
 
     def candidates(
-        self, grid: np.array, row: int, col: int, possibilities_list: list = None
+        self, grid: np.ndarray, row: int, col: int, possibilities_list: list = None
     ) -> list:
         """
         Compute all possiblities for a particular row and col
@@ -204,6 +232,41 @@ class SudokuSolver:
         return [
             num for num in possibilities_list if self.condition(grid, num, row, col)
         ]
+
+    def print(self, grid: np.ndarray = None, refresh=0.05, override=False):
+        if grid is None:
+            grid = self.grid
+        if (
+            self.display_time is None
+            or override
+            or (datetime.now() - self.display_time) / timedelta(seconds=1) > refresh
+        ):
+            clear_output(wait=True)
+            print(grid)
+            self.display_time = datetime.now()
+
+    def deduce(self, grid: np.ndarray = None):
+        if grid is None:
+            grid = self.grid
+        for row in range(9):
+            if deduce(grid[row, :]):
+                self.deduce(grid)
+                return
+        for col in range(9):
+            if deduce(grid[:, col]):
+                self.deduce(grid)
+                return
+        for block_row in range(0, 9, 3):
+            for block_col in range(0, 9, 3):
+                block = grid[block_row : block_row + 3, block_col : block_col + 3]
+                if np.count_nonzero(block) == 8:
+                    arr = block.flatten()
+                    deduce(arr)
+                    grid[
+                        block_row : block_row + 3, block_col : block_col + 3
+                    ] = arr.reshape([3, 3])
+                    self.deduce(grid)
+                    return
 
     def possibilities(self, grid: np.array, possibilities_list: list = None) -> list:
         """
@@ -238,12 +301,25 @@ class SudokuSolver:
                 for row in range(9)
             ]
 
-    def check_grid(self, grid: np.array) -> bool:
+    def check_grid(self, grid: np.array = None) -> bool:
+        if grid is None:
+            grid = self.grid
         return all(
             (
                 True
                 if grid[row, col] == 0
                 else self.condition(grid, grid[row, col], row, col)
+                for row in range(9)
+                for col in range(9)
+            )
+        )
+
+    def count_errors(self, grid: np.array = None) -> int:
+        if grid is None:
+            grid = self.grid
+        return sum(
+            (
+                not self.condition(grid, grid[row, col], row, col)
                 for row in range(9)
                 for col in range(9)
             )
@@ -256,16 +332,22 @@ class SudokuSolver:
             if grid[row, col] == 0 and self.condition(grid, num, row, col)
         ]
 
-    def _solve(self, grid: np.ndarray = None, verbose: bool = True) -> np.ndarray:
+    def _solve(
+        self, grid: np.ndarray = None, verbose: bool = True, partial: bool = False
+    ) -> np.ndarray:
         # Make sure we don't mutate the input
         if grid is None:
             grid = self.grid.copy()
         else:
             grid = grid.copy()
+        self.deduce(grid)
         if verbose:
-            clear_output(wait=True)
-            print(grid)
-        num_order = get_num_order(grid)
+            self.print(grid)
+        if not hasattr(self, "num_order"):
+            self.num_order = get_num_order(grid)
+        if partial and not hasattr(self, "partial_order"):
+            self.partial_order = get_num_order(grid, partial=True)
+        num_order = self.partial_order if partial else self.num_order
         for test_num in num_order:
             if np.count_nonzero(grid.copy() == test_num) < 9:
                 for row in range(9):
@@ -275,6 +357,7 @@ class SudokuSolver:
                     if len(cols) == 0:
                         return
                     else:
+                        shuffle(cols)
                         for col in cols:
                             grid_new = grid.copy()
                             grid_new[row, col] = test_num
@@ -286,6 +369,69 @@ class SudokuSolver:
                         return
         if self.check_grid(grid):
             return grid
+
+    def _solve_poss(
+        self,
+        grid: np.ndarray = None,
+        possibilities_list: list = None,
+        verbose: bool = True,
+        depth: int = 1,
+    ) -> np.ndarray:
+        """Solve using squares with fewest options"""
+        if grid is None:
+            grid = self.grid
+        self.deduce(grid)
+        if depth > 5:
+            return self._solve(grid)
+        if verbose:
+            self.print(grid)
+        if not hasattr(self, "cell_order"):
+            possibilities_list = self.possibilities(grid, possibilities_list)
+            poss_num = np.array(
+                [
+                    [
+                        999
+                        if possibilities_list[row][col] is None
+                        else len(possibilities_list[row][col])
+                        for col in range(9)
+                    ]
+                    for row in range(9)
+                ]
+            )
+            if poss_num.min() > 3:
+                result = self._solve(grid)
+                if verbose:
+                    self.print(result, override=True)
+                return result
+            grid_coords = [(row, col) for row in range(9) for col in range(9)]
+            self.cell_order = sorted(grid_coords, key=poss_num.__getitem__)
+        for cell in self.cell_order:
+            row, col = cell
+            block_row = row // 3 * 3
+            block_col = col // 3 * 3
+            if grid[cell] > 0:
+                continue
+            candidates = set(range(1, 10))
+            candidates -= set(grid[row, :])
+            candidates -= set(grid[:, col])
+            candidates -= set(
+                grid[block_row : block_row + 3, block_col : block_col + 3].flatten()
+            )
+            candidates = list(candidates)
+            if len(candidates) == 0:
+                return
+            if len(candidates) == 1:
+                grid_new = grid.copy()
+                grid_new[cell] = candidates.pop()
+                return self._solve_poss(grid_new, depth=depth)
+            shuffle(candidates)
+            for candidate in candidates:
+                grid_new = grid.copy()
+                grid_new[cell] = candidate
+                if self.condition(grid_new, candidate, row, col):
+                    result = self._solve_poss(grid_new, depth=depth * len(candidates))
+                    if result is not None:
+                        return result
 
     def solve(self, grid: np.ndarray = None, verbose: bool = True) -> np.ndarray:
         """
@@ -304,10 +450,12 @@ class SudokuSolver:
         np.ndarray
             Filled Grid
         """
-        result = self._solve(grid, verbose=verbose)
+        result = self._solve_poss(grid, verbose=verbose)
         if result is None:
             raise ValueError("No solution")
         else:
+            if verbose:
+                self.print(result, override=True)
             return result
 
     def diag(self, num: int, row: int, col: int):
@@ -323,14 +471,11 @@ class SudokuSolver:
         col: int
             Col to insert num in, between 0 and 8
         """
-        for cond in [
-            RookCondition,
-            BlockCondition,
-            KingCondition,
-            KnightCondition,
-            ConsecutiveCondition,
-        ]:
-            print(cond.__name__, cond().test(self.grid, num, row, col))
+        for cond in self.condition.conditions:
+            if isinstance(cond, type):
+                print(cond.__name__, cond().test(self.grid, num, row, col))
+            else:
+                print(cond.__class__.__name__, cond.test(self.grid, num, row, col))
 
 
 class StandardSolver(SudokuSolver):
@@ -387,6 +532,24 @@ def get_meat(arr, return_nums=True):
     else:
         return start, stop
 
+def get_meat_empty(arr, row_sum):
+    one_pos = np.where(arr == 1)[0]
+    nine_pos = np.where(arr == 9)[0]
+    if len(one_pos) == 0 or len(nine_pos) == 0:
+        return
+    start = min(one_pos, nine_pos)[0] + 1
+    stop = max(one_pos, nine_pos)[0]
+    return start, stop, row_sum - arr[start:stop].sum(), np.count_nonzero(arr[start:stop] == 0)
+
+def max_poss_meat(arr: np.array, minimum=False) -> int:
+    """Return maximum possible sandwich sum"""
+    start, stop, meat = get_meat(arr)
+    missing_nos = [x for x in range(1, 10) if x not in arr]
+    missing_nos = sorted(missing_nos, reverse=not minimum)
+    zero_count = np.count_nonzero(meat == 0)
+    max_sum = meat.sum() + sum(missing_nos[:zero_count])
+    return max_sum
+
 
 class SandwichCondition(SudokuCondition):
     def __init__(self, row_sums: np.array, col_sums: np.array):
@@ -402,43 +565,87 @@ class SandwichCondition(SudokuCondition):
         self.col_sums = col_sums
 
     def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
-        for grid_iter, rc_sum in zip([grid, grid.T], [self.row_sums, self.col_sums]):
-            for row, row_sum in enumerate(rc_sum):
-                try:
-                    start, stop, _ = get_meat(grid_iter[row, :])
-                except TypeError:
+        #  unify column and row tests
+        for dimension in ["row", "col"]:
+            if dimension == "row":
+                row_idx = row
+                col_idx = col
+                grid_iter = grid
+                row_sum = self.row_sums[row]
+            else:
+                row_idx = col
+                col_idx = row
+                grid_iter = grid.T
+                row_sum = self.col_sums[col]
+            if row_sum is None:  # support for missing row sums
+                continue
+            temp_row = grid_iter[row_idx, :].copy()
+            temp_row_nonzero = [x for x in temp_row if x != 0]
+            if len(set(temp_row_nonzero)) != len(temp_row_nonzero):
+                return False
+            # make sure row sum is achievable if we're placing 1 or 9
+            if num == 9 and 1 in temp_row:
+                temp_row[col_idx] = 9
+                if max_poss_meat(temp_row) < row_sum:
+                    return False
+                if max_poss_meat(temp_row, minimum=True) > row_sum:
+                    return False
+                # check for sufficient space
+                dist = np.abs(col_idx - np.where(temp_row == 1)[0][0])
+                if dist - 1 < SANDWICH_MIN_LENGTH[row_sum]:
+                    return False
+                if dist - 1 > SANDWICH_MAX_LENGTH[row_sum]:
+                    return False
+                continue
+            temp_row = grid_iter[row_idx, :].copy()
+            if num == 1 and 9 in temp_row:
+                temp_row[col_idx] = 1
+                if max_poss_meat(temp_row) < row_sum:
+                    return False
+                if max_poss_meat(temp_row, minimum=True) > row_sum:
+                    return False
+                # check for sufficient space
+                dist = np.abs(col_idx - np.where(temp_row == 9)[0][0])
+                if dist - 1 < SANDWICH_MIN_LENGTH[row_sum]:
+                    return False
+                if dist - 1 > SANDWICH_MAX_LENGTH[row_sum]:
+                    return False
+                continue
+            if 1 not in grid_iter[row_idx, :] or 9 not in grid_iter[row_idx, :]:
+                continue
+            start, stop, _ = get_meat(grid_iter[row_idx, :])
+            extent_checks = [
+                (0, 1, 0),
+                (1, 5, 1),
+                (5, 9, 2),
+                (9, 14, 3),
+                (14, 20, 4),
+                (20, 27, 5),
+                (27, 35, 6),
+            ]
+            # check that 1 and 9 aren't too far apart
+            for min_sum, max_sum, max_len in extent_checks:
+                if row_sum >= min_sum and row_sum < max_sum and stop - start > max_len:
+                    return False
+            nums = grid_iter[row_idx, start:stop]
+            if start == stop:  # 1 and 9 adjacent
+                if row_sum > 0:
+                    return False
+                else:
                     continue
-                extent_checks = [
-                    (0, 1, 0),
-                    (1, 5, 1),
-                    (5, 9, 2),
-                    (9, 14, 3),
-                    (14, 20, 4),
-                    (20, 27, 5),
-                    (27, 35, 6),
-                ]
-                # check that 1 and 9 aren't too far apart
-                for min_sum, max_sum, max_len in extent_checks:
-                    if (
-                        row_sum >= min_sum
-                        and row_sum < max_sum
-                        and stop - start > max_len
-                    ):
-                        return False
-                nums = grid_iter[row, start:stop]
-                if start == stop:  # 1 and 9 adjacent
-                    if row_sum > 0:
-                        return False
-                    else:
-                        continue
-                elif nums.min() == 0:  # 1 and 9 present, holes between
-                    if nums.sum() > row_sum:  # sum is to high
-                        return False
-                    else:  # sum is okay thusfar
-                        continue
-                else:  # 1 and 9 present, no holes between
-                    if nums.sum() != row_sum:
-                        return False
+            elif nums.min() == 0:  # 1 and 9 present, holes between
+                temp_row = grid_iter[row_idx, :]
+                if max_poss_meat(temp_row) < row_sum:
+
+                    return False
+                if max_poss_meat(temp_row, minimum=True) > row_sum:
+
+                    return False
+                else:  # sum is okay thusfar
+                    continue
+            else:  # 1 and 9 present, no holes between
+                if nums.sum() != row_sum:
+                    return False
         return True
 
 
@@ -451,6 +658,14 @@ for length in range(0, 8):
 
 SANDWICH_SEARCH_ORDER_DICT = {
     k: sum((len(list(permutations(x))) for x in v)) for k, v in SANDWICH_COMBOS.items()
+}
+SANDWICH_MIN_LENGTH = {
+    rsum: min((v for k, v in SANDWICH_COMBOS.keys() if k == rsum))
+    for rsum in set((k for k, _ in SANDWICH_COMBOS.keys()))
+}
+SANDWICH_MAX_LENGTH = {
+    rsum: max((v for k, v in SANDWICH_COMBOS.keys() if k == rsum))
+    for rsum in set((k for k, _ in SANDWICH_COMBOS.keys()))
 }
 
 
@@ -480,7 +695,7 @@ class SandwichSolver(SudokuSolver):
     def possible_cols(self, grid: np.array, num: int, row: int) -> list:
         if 1 in grid[row, :] and 9 in grid[row, :]:
             if self.row_sums[row] in {2, 3, 4} and num == self.row_sums[row]:
-                start, stop = get_meat(grid[row, :])
+                start, stop, _ = get_meat(grid[row, :])
                 return list(range(start, stop))
 
         possibles = range(9)
@@ -507,14 +722,51 @@ class SandwichSolver(SudokuSolver):
         np.ndarray
             Filled Grid
         """
+        if grid is None:
+            grid = self.grid
+        self.deduce(grid)
+        for row in range(9):
+            if self.row_sums[row] == 35 and min(grid[row, 0], grid[row, -1]) == 0:
+                for top, bot in [(1, 9), (9, 1)]:
+                    grid_new = grid.copy()
+                    if grid_new[row, 0] == 0:
+                        grid_new[row, 0] = top
+                    if grid_new[row, -1] == 0:
+                        grid_new[row, -1] = bot
+                    if grid_new[row, 0] == grid_new[row, -1]:
+                        continue
+                    try:
+                        result = self.solve(grid_new, verbose=verbose)
+                        return result
+                    except ValueError:
+                        continue
+                raise ValueError("No solution")
+        for col in range(9):
+            if self.col_sums[col] == 35 and min(grid[0, col], grid[-1, col]) == 0:
+                for top, bot in [(1, 9), (9, 1)]:
+                    grid_new = grid.copy()
+                    grid_new[0, col] = top
+                    grid_new[-1, col] = bot
+                    try:
+                        result = self.solve(grid_new, verbose=verbose)
+                        self.print(result)
+                        return result
+                    except ValueError:
+                        continue
+                raise ValueError("No solution")
         result = self._solve_sandwich(grid, verbose=verbose)
         if result is None:
             raise ValueError("No solution")
         else:
+            if verbose:
+                self.print(result, override=True)
             return result
 
     def _solve_sandwich(
-        self, grid: np.ndarray = None, verbose: bool = True
+        self,
+        grid: np.ndarray = None,
+        possibilities_list: list = None,
+        verbose: bool = True,
     ) -> np.ndarray:
         # Make sure we don't mutate the input
         if grid is None:
@@ -522,11 +774,13 @@ class SandwichSolver(SudokuSolver):
         else:
             grid = grid.copy()
         if verbose:
-            clear_output(wait=True)
-            print(grid)
-        num_order = get_num_order(grid)
-        num_order = [1, 9] + [x for x in num_order if x not in {1, 9}]
-        for test_num in num_order:
+            self.print(grid)
+        if not hasattr(self, "num_order"):
+            self.num_order = get_num_order(grid)
+            self.num_order = [1, 9] + [x for x in self.num_order if x not in {1, 9}]
+        row_sums = self.row_sums.copy()
+        col_sums = self.col_sums.copy()
+        for test_num in self.num_order:
             if test_num in {1, 9}:
                 if np.count_nonzero(grid.copy() == test_num) < 9:
                     for row in range(9):
@@ -546,30 +800,36 @@ class SandwichSolver(SudokuSolver):
                                     continue
                             return
             else:  # filled all 1's and 9's
-                if np.count_nonzero(grid) > 60:
-                    return self.solve(grid, verbose=verbose)
-                extents = []
+                if np.count_nonzero(grid) > 50:  # use standard solver
+                    return self._solve_poss(grid, verbose=verbose)
+                extents = {}
                 for row in range(9):
-                     extents.append(get_meat(grid[row, :], return_nums=False))
+                    if row_sums[row] is None:
+                        continue
+                    extents[row] = get_meat_empty(grid[row, :], row_sums[row])
                 try:
-                    search_order_dict = {
-                        row: SANDWICH_SEARCH_ORDER_DICT[
-                            (self.row_sums[row], stop - start)
+                    search_order_dict = {}
+                    for row, (start, stop, new_sum, slots) in extents.items():
+                        if row_sums[row] is not None:
+                            row_sums[row] = new_sum
+                        search_order_dict[row] = SANDWICH_SEARCH_ORDER_DICT[
+                            (new_sum, slots)
                         ]
-                        for row, (start, stop) in enumerate(extents)
-                    }
                 except KeyError:
                     return
-                col_extents = []
+                col_extents = {}
                 for col in range(9):
-                    col_extents.append(get_meat(grid[:, col], return_nums=False))
+                    if col_sums[col] is None:
+                        continue
+                    col_extents[col] = get_meat_empty(grid[:, col], col_sums[col])
                 try:
-                    col_search_order_dict = {
-                        col: SANDWICH_SEARCH_ORDER_DICT[
-                            (self.col_sums[col], stop - start)
+                    col_search_order_dict = {}
+                    for col, (start, stop, new_sum, slots) in col_extents.items():
+                        if col_sums[col] is not None:
+                            col_sums[col] = new_sum
+                        col_search_order_dict[col] = SANDWICH_SEARCH_ORDER_DICT[
+                            (new_sum, slots)
                         ]
-                        for col, (start, stop) in enumerate(col_extents)
-                    }
                 except KeyError:
                     return
                 def check_sandwich_has_slots(arr):
@@ -577,6 +837,7 @@ class SandwichSolver(SudokuSolver):
                     if start == stop:
                         return False
                     return meat.min() == 0
+
                 search_order_dict = {
                     k: v
                     for k, v in search_order_dict.items()
@@ -594,70 +855,103 @@ class SandwichSolver(SudokuSolver):
                     col_search_order_dict.keys(), key=col_search_order_dict.__getitem__
                 )
                 # if the remaining searches are too deep, fall back to previous algorithm
-                if (
+                fallback = (
                     min(
-                        min(col_search_order_dict.values()),
-                        min(search_order_dict.values()),
+                        min(col_search_order_dict.values())
+                        if col_search_order_dict
+                        else 99999,
+                        min(search_order_dict.values()) if search_order_dict else 99999,
                     )
-                    > 200
-                ):
-                    result = self._solve(grid, verbose=verbose)
+                    > 99999
+                )
+                if not col_search_order_dict and not search_order_dict:
+                    fallback = True
+                if fallback:
+                    result = self._solve_poss(grid, verbose=verbose)
                     if result is not None:
                         return result
                     else:
                         return
                 # row search is more efficient
-                elif min(col_search_order_dict.values()) >= min(
-                    search_order_dict.values()
-                ):
+                row_preferred = min(
+                    list(col_search_order_dict.values()) + [99999]
+                ) >= min(list(search_order_dict.values()) + [99999])
+                if row_preferred:
                     for row in search_order:
-                        start, stop = extents[row]
+                        if self.row_sums[row] is None:
+                            continue
+                        start, stop, row_sum, row_empty = extents[row]
                         if start == stop or grid[row, start:stop].min() > 0:
                             continue
-                        if (self.row_sums[row], stop - start) not in SANDWICH_COMBOS:
+                        if (row_sum, row_empty) not in SANDWICH_COMBOS:
                             return
-                        combos = SANDWICH_COMBOS[(self.row_sums[row], stop - start)]
-                        for combo in combos:  # for the given row, iterate over all valid combinations
-                            # if there are any numbers missing from combo
-                            if set(grid[row, start:stop]) - combo - {0}:
+                        combos = SANDWICH_COMBOS[(row_sum, row_empty)]
+                        for combo in combos:
+                            # for the given row, iterate over all valid combinations
+                            # skip if there are invalid numbers in the combination
+                            if combo.intersection(set(grid[row, start:stop])):
                                 continue
-                            for permutation in permutations(combo):  # iterate over all permutations
-                                if any(  # check for mismatches
-                                    (grid[row, start:stop] != np.array(permutation))
-                                    & (grid[row, start:stop] != 0)
+                            for permutation in permutations(combo):
+                                # iterate over all permutations
+                                permutation = list(permutation)
+                                grid_new = grid.copy()
+                                for idx in range(start, stop):
+                                    if grid_new[row, idx] == 0:
+                                        grid_new[row, idx] = permutation.pop()
+                                if not all(
+                                    (
+                                        self.condition(
+                                            grid_new, grid_new[row, col], row, col
+                                        )
+                                        for col in range(start, stop)
+                                    )
                                 ):
                                     continue
-                                grid_new = grid.copy()
-                                grid_new[row, start:stop] = permutation
-                                result = self._solve_sandwich(grid_new, verbose=verbose)
+                                result = self._solve_sandwich(
+                                    grid_new,
+                                    deepcopy(possibilities_list),
+                                    verbose=verbose,
+                                )
                                 if result is not None:
                                     return result
                         return
                 # col search is more efficient
                 else:
                     for col in col_search_order:
-                        start, stop = col_extents[col]
+                        if self.col_sums[col] is None:
+                            pass
+                        start, stop, col_sum, col_empty = col_extents[col]
                         if start == stop or grid[start:stop, col].min() > 0:
                             continue
-                        if (self.col_sums[col], stop - start) not in SANDWICH_COMBOS:
+                        if (col_sum, col_empty) not in SANDWICH_COMBOS:
                             return
-                        combos = SANDWICH_COMBOS[(self.col_sums[col], stop - start)]
-                        for combo in combos:  # for the given column, iterate over all valid combinations
-                            # if there are any numbers missing from combo
-                            if set(grid[start:stop, col]) - combo - {0}:
+                        combos = SANDWICH_COMBOS[(col_sum, col_empty)]
+                        for combo in combos:
+                            # for the given row, iterate over all valid combinations
+                            # skip if there are invalid numbers in the combination
+                            if combo.intersection(set(grid[start:stop, col])):
                                 continue
-                            for permutation in permutations(combo):  # iterate over all permutations
-                                if any(  # check for mismatches
-                                    (grid[start:stop, col] != np.array(permutation))
-                                    & (grid[start:stop, col] != 0)
+                            for permutation in permutations(combo):
+                                # iterate over all permutations
+                                permutation = list(permutation)
+                                grid_new = grid.copy()
+                                for idx in range(start, stop):
+                                    if grid_new[idx, col] == 0:
+                                        grid_new[idx, col] = permutation.pop()
+                                if not all(
+                                    (
+                                        self.condition(
+                                            grid_new, grid_new[row, col], row, col
+                                        )
+                                        for row in range(start, stop)
+                                    )
                                 ):
                                     continue
-                                # try this permutation
-                                grid_new = grid.copy()
-                                grid_new[start:stop, col] = permutation
-                                if not self.check_grid(grid_new):
-                                    continue
-                                result = self._solve_sandwich(grid_new, verbose=verbose)
+                                result = self._solve_sandwich(
+                                    grid_new,
+                                    deepcopy(possibilities_list),
+                                    verbose=verbose,
+                                )
                                 if result is not None:
                                     return result
                         return
@@ -679,11 +973,15 @@ class ThermometerCondition(SudokuCondition):
         grid = grid.copy()
         grid[row, col] = num
         for path in self.paths:
+            if (row, col) not in path:
+                pass
             nums = [grid[row, col] for row, col in path if grid[row, col] > 0]
             if not np.all(np.diff(nums) > 0):
                 return False
         # now check for numbers that are too close together
         for path in self.paths:
+            if (row, col) not in path:
+                pass
             position_dict = {
                 grid[row, col]: idx
                 for idx, (row, col) in enumerate(path)
@@ -797,9 +1095,9 @@ class ThermometerSolver(SudokuSolver):
             grid = self.grid.copy()
         else:
             grid = grid.copy()
+        self.deduce(grid)
         if verbose:
-            clear_output(wait=True)
-            print(grid)
+            self.print(grid)
         possibilities_list = self.possibilities(grid, possibilities_list)
         if min([len(x) for x in self.possibilities(grid)]) == 0:
             return False
@@ -827,7 +1125,7 @@ class ThermometerSolver(SudokuSolver):
                     candidates = possibilities_list[row][col]
                     if len(candidates) == 1:
                         grid[row, col] = candidates[0]
-                        candidates[row][col] = None
+                        possibilities_list[row][col] = None
                     elif len(candidates) <= 2 and len(candidates) > 0:
                         for num in candidates:
                             grid_new = grid.copy()
@@ -837,64 +1135,33 @@ class ThermometerSolver(SudokuSolver):
                             )
                             if result is not None:
                                 return result
+                        return
         # fill paths first
         for path in self.paths:
             path_nums = [grid[row, col] for row, col in path]
             if min(path_nums) > 0:  # path is filled
                 continue
-            for row, col in path:
-                if grid[row, col] > 0:  # square is filled
+            
+            for segments in split_path(np.array(path_nums)):
+                try:
+                    for seg_slice, seg_nums in segments:
+                        grid_new = grid.copy()
+                        for cell, num in zip(path[seg_slice], seg_nums):
+                            grid_new[cell] = num
+                        for cell, num in zip(path[seg_slice], seg_nums):
+                            if not self.condition(grid_new, num, cell[0], cell[1]):
+                                raise AssertionError
+                except AssertionError:
                     continue
-                candidates = possibilities_list[row][col]
-                if len(candidates) == 0:
-                    return
-                for num in candidates:  # try each candidate
-                    grid_new = grid.copy()
-                    grid_new[row, col] = num
-                    possibilities_list_new = deepcopy(possibilities_list)
-                    # incremental possibilities update
-                    _sudoku_update(grid, possibilities_list_new, row, col, self.paths)
-                    try:
-                        for row2 in range(9):
-                            for col2 in range(9):
-                                cand = possibilities_list_new[row2][col2]
-                                if cand is None:
-                                    continue
-                                if len(cand) == 1:  # only one possible value for cell
-                                    grid[row2, col2] == cand[0]
-                                    # incremental possibilities update
-                                    _sudoku_update(
-                                        grid,
-                                        possibilities_list_new,
-                                        row2,
-                                        col2,
-                                        self.paths,
-                                    )
-                                elif len(cand) == 0:
-                                    raise AssertionError  # unfillable cell
-                    except AssertionError:  # it didn't work, try another one
-                        continue
-                    # looks good, proceed
-                    result = self._solve_thermometer(
-                        grid_new,
-                        verbose=verbose,
-                        possibilities_list=possibilities_list_new,
-                    )
-                    if result is not None:
-                        return result
-                    else:
-                        continue
+                result = self._solve_thermometer(grid_new)
+                if result is not None:
+                    return result
+                else:
+                    continue
                 return
-        # finished thermometers, check for deducible cells and contradictions
-        for row2 in range(9):
-            for col2 in range(9):
-                cand = self.candidates(grid, row2, col2)
-                if len(cand) == 1:
-                    grid[row2, col2] == cand[0]
-                elif len(cand) == 0:
-                    return
+            return
         # use std sudoku solver for speed because we already fulfilled thermometer conds
-        result = StandardSolver(grid)._solve(verbose=verbose)
+        result = StandardSolver(grid)._solve_poss(verbose=verbose)
         if result is not None:
             return result
         else:
