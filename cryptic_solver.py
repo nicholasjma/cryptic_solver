@@ -164,8 +164,8 @@ class ConsecutiveCondition(SudokuCondition):
 class ComboCondition(SudokuCondition):
     """Combine multiple SudokuCondition classses into one"""
 
-    def __init__(self, conditions: SudokuCondition):
-        self.conditions = conditions
+    def __init__(self, *args):
+        self.conditions = args
 
     def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
         try:
@@ -238,7 +238,7 @@ class SudokuSolver:
             num for num in possibilities_list if self.condition(grid, num, row, col)
         ]
 
-    def print(self, grid: np.ndarray = None, refresh=0.1, override=False):
+    def print(self, grid: np.ndarray = None, refresh=0.2, override=False):
         if grid is None:
             grid = self.grid
         if (
@@ -510,7 +510,7 @@ class StandardSolver(SudokuSolver):
             Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries
         """
         # initialize using standard ruleset
-        super().__init__(grid, ComboCondition([RookCondition, BlockCondition]))
+        super().__init__(grid, ComboCondition(RookCondition, BlockCondition))
 
 
 class CrypticSolver(SudokuSolver):
@@ -530,13 +530,11 @@ class CrypticSolver(SudokuSolver):
         super().__init__(
             grid,
             ComboCondition(
-                [
-                    RookCondition,
-                    BlockCondition,
-                    KingCondition,
-                    KnightCondition,
-                    ConsecutiveCondition,
-                ]
+                RookCondition,
+                BlockCondition,
+                KingCondition,
+                KnightCondition,
+                ConsecutiveCondition,
             ),
         )
 
@@ -716,7 +714,7 @@ class SandwichSolver(SudokuSolver):
         super().__init__(
             grid,
             ComboCondition(
-                [RookCondition, BlockCondition, SandwichCondition(row_sums, col_sums)]
+                RookCondition, BlockCondition, SandwichCondition(row_sums, col_sums)
             ),
         )
 
@@ -1123,9 +1121,7 @@ class ThermometerSolver(SudokuSolver):
         self.paths = sorted(paths, key=comb)
         super().__init__(
             grid,
-            ComboCondition(
-                [RookCondition, BlockCondition, ThermometerCondition(paths)]
-            ),
+            ComboCondition(RookCondition, BlockCondition, ThermometerCondition(paths)),
         )
 
     def solve(self, grid: np.ndarray = None, verbose: bool = True) -> np.ndarray:
