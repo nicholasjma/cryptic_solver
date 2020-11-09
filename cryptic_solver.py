@@ -24,7 +24,7 @@ else:
     # don't bother without put clearing if we're not in IPython
     def clear_output(*args, **kwargs):
         return
-    
+
 
 def split_path(path):
     path_bookend = np.concatenate([[999], path, [999]])
@@ -40,7 +40,12 @@ def split_path(path):
             right = 10
         else:
             right = path[end]
-        segments.append(zip(repeat(slice(start, end)), list(combinations(range(left, right), end - start))))
+        segments.append(
+            zip(
+                repeat(slice(start, end)),
+                list(combinations(range(left, right), end - start)),
+            )
+        )
     return list(product(*segments))
 
 
@@ -233,7 +238,7 @@ class SudokuSolver:
             num for num in possibilities_list if self.condition(grid, num, row, col)
         ]
 
-    def print(self, grid: np.ndarray = None, refresh=0.05, override=False):
+    def print(self, grid: np.ndarray = None, refresh=0.1, override=False):
         if grid is None:
             grid = self.grid
         if (
@@ -242,7 +247,23 @@ class SudokuSolver:
             or (datetime.now() - self.display_time) / timedelta(seconds=1) > refresh
         ):
             clear_output(wait=True)
-            print(grid)
+
+            def print_divider():
+                line_str = "-" * (4 * 2 + 2) + "+"
+                line_str += "-" * (4 * 2 + 3) + "+"
+                line_str += "-" * (4 * 2 + 2)
+                print("+-" + line_str + "-+")
+
+            print_divider()
+            for row in range(9):
+                line_str = bytearray("   ".join(grid[row, :].astype(str)), "utf-8")
+                line_str[10] = bytearray("|", "utf-8")[0]
+                line_str[22] = bytearray("|", "utf-8")[0]
+                print("| " + line_str.decode() + " | ")
+                if row in (2, 5, 8):
+                    print_divider()
+                elif row < 8:
+                    print("| " + " " * 10 + "|" + " " * 11 + "|" + " " * 10 + " |")
             self.display_time = datetime.now()
 
     def deduce(self, grid: np.ndarray = None):
@@ -532,6 +553,7 @@ def get_meat(arr, return_nums=True):
     else:
         return start, stop
 
+
 def get_meat_empty(arr, row_sum):
     one_pos = np.where(arr == 1)[0]
     nine_pos = np.where(arr == 9)[0]
@@ -539,7 +561,13 @@ def get_meat_empty(arr, row_sum):
         return
     start = min(one_pos, nine_pos)[0] + 1
     stop = max(one_pos, nine_pos)[0]
-    return start, stop, row_sum - arr[start:stop].sum(), np.count_nonzero(arr[start:stop] == 0)
+    return (
+        start,
+        stop,
+        row_sum - arr[start:stop].sum(),
+        np.count_nonzero(arr[start:stop] == 0),
+    )
+
 
 def max_poss_meat(arr: np.array, minimum=False) -> int:
     """Return maximum possible sandwich sum"""
@@ -705,6 +733,41 @@ class SandwichSolver(SudokuSolver):
             if grid[row, col] == 0 and self.condition(grid, num, row, col)
         ]
 
+    def print(self, grid: np.ndarray = None, refresh=0.05, override=False):
+        if grid is None:
+            grid = self.grid
+        if (
+            self.display_time is None
+            or override
+            or (datetime.now() - self.display_time) / timedelta(seconds=1) > refresh
+        ):
+            clear_output(wait=True)
+
+            def print_divider():
+                line_str = "-" * (4 * 2 + 2) + "+"
+                line_str += "-" * (4 * 2 + 3) + "+"
+                line_str += "-" * (4 * 2 + 2)
+                print("+-" + line_str + "-+")
+
+            print_divider()
+            for row in range(9):
+                line_str = bytearray("   ".join(grid[row, :].astype(str)), "utf-8")
+                line_str[10] = bytearray("|", "utf-8")[0]
+                line_str[22] = bytearray("|", "utf-8")[0]
+                print(
+                    "| "
+                    + line_str.decode()
+                    + " | "
+                    + str(self.row_sums[row] if self.row_sums[row] is not None else "")
+                )
+                if row in (2, 5, 8):
+                    print_divider()
+                elif row < 8:
+                    print("| " + " " * 10 + "|" + " " * 11 + "|" + " " * 10 + " |")
+            col_str = ["    " if x is None else str(x).center(4) for x in self.col_sums]
+            print(" " + "".join(col_str))
+            self.display_time = datetime.now()
+
     def solve(self, grid: np.ndarray = None, verbose: bool = True) -> np.ndarray:
         """
         Recursively solve sudoku by filling the numbers used in the puzzle first, using
@@ -832,6 +895,7 @@ class SandwichSolver(SudokuSolver):
                         ]
                 except KeyError:
                     return
+
                 def check_sandwich_has_slots(arr):
                     start, stop, meat = get_meat(arr)
                     if start == stop:
@@ -1141,7 +1205,7 @@ class ThermometerSolver(SudokuSolver):
             path_nums = [grid[row, col] for row, col in path]
             if min(path_nums) > 0:  # path is filled
                 continue
-            
+
             for segments in split_path(np.array(path_nums)):
                 try:
                     for seg_slice, seg_nums in segments:
