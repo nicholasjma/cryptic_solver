@@ -165,6 +165,8 @@ class ComboCondition(SudokuCondition):
     """Combine multiple SudokuCondition classses into one"""
 
     def __init__(self, *args):
+        if len(args) == 1 and isinstance(args[0], list):
+            args = args[0]
         self.conditions = args
 
     def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
@@ -353,6 +355,48 @@ class SudokuSolver:
             if grid[row, col] == 0 and self.condition(grid, num, row, col)
         ]
 
+    def initial_search(
+        self,
+        grid: np.ndarray = None,
+        path: list = None,
+        verbose: bool = True,
+        final_condition: SudokuCondition = None,
+    ):
+        if grid is None:
+            grid = self.grid
+        self.deduce(grid)
+        if verbose:
+            self.print(grid, override=True)
+        if path is None:
+            return self.solve(grid=grid, verbose=verbose)
+        for row, col in path:
+            if grid[row, col] > 0:
+                continue
+            for num in range(1, 10):
+                if self.condition(grid, num, row, col):
+                    grid_new = grid.copy()
+                    grid_new[row, col] = num
+                    result = self.initial_search(
+                        grid=grid_new,
+                        path=path,
+                        verbose=verbose,
+                        final_condition=final_condition,
+                    )
+                    if result is None:
+                        continue
+                    else:
+                        return result
+            return
+        if final_condition is not None:
+            result = StandardSolver(grid, final_condition)._solve(verbose=verbose)
+        else:
+            result = self.solve(grid=grid, verbose=verbose)
+        if result is None:
+            return
+        else:
+            self.print(result, override=True)
+            return result
+
     def _solve(
         self, grid: np.ndarray = None, verbose: bool = True, partial: bool = False
     ) -> np.ndarray:
@@ -473,7 +517,7 @@ class SudokuSolver:
         """
         result = self._solve_poss(grid, verbose=verbose)
         if result is None:
-            raise ValueError("No solution")
+            return
         else:
             if verbose:
                 self.print(result, override=True)
@@ -502,15 +546,20 @@ class SudokuSolver:
 class StandardSolver(SudokuSolver):
     """Standard sudoku solver"""
 
-    def __init__(self, grid: np.array):
+    def __init__(self, grid: np.array, condition: SudokuCondition = None):
         """
         Parameters
         ----------
         grid: np.ndarray
             Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries
+        condition: SudokuCondition
+            Extra condition to include
         """
         # initialize using standard ruleset
-        super().__init__(grid, ComboCondition(RookCondition, BlockCondition))
+        conditions = [RookCondition, BlockCondition]
+        if condition is not None:
+            conditions += [condition]
+        super().__init__(grid, ComboCondition(conditions))
 
 
 class CrypticSolver(SudokuSolver):
@@ -519,24 +568,26 @@ class CrypticSolver(SudokuSolver):
     https://www.theguardian.com/science/2020/may/18/can-you-solve-it-sudoku-as-spectator-sport-is-unlikely-lockdown-hit
     """
 
-    def __init__(self, grid: np.array):
+    def __init__(self, grid: np.array, condition: SudokuCondition = None):
         """
         Parameters
         ----------
         grid: np.ndarray
             Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries
+        condition: SudokuCondition
+            Extra condition to include
         """
-        # initialize using cryptic ruleset
-        super().__init__(
-            grid,
-            ComboCondition(
-                RookCondition,
-                BlockCondition,
-                KingCondition,
-                KnightCondition,
-                ConsecutiveCondition,
-            ),
-        )
+        # initialize using standard ruleset
+        conditions = [
+            RookCondition,
+            BlockCondition,
+            KingCondition,
+            KnightCondition,
+            ConsecutiveCondition,
+        ]
+        if condition is not None:
+            conditions += [condition]
+        super().__init__(grid, ComboCondition(conditions))
 
 
 def get_meat(arr, return_nums=True):
@@ -701,22 +752,32 @@ class SandwichSolver(SudokuSolver):
     https://www.theguardian.com/science/2019/may/06/can-you-solve-it-sandwich-sudoku-a-new-puzzle-goes-viral
     """
 
-    def __init__(self, grid: np.array, row_sums: np.array, col_sums: np.array):
+    def __init__(
+        self,
+        grid: np.array,
+        row_sums: np.array,
+        col_sums: np.array,
+        condition: SudokuCondition = None,
+    ):
         """
         Parameters
         ----------
         grid: np.ndarray
             Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries
+        condition: SudokuCondition
+            Extra condition to include
         """
         # initialize using standard ruleset
         self.row_sums = row_sums
         self.col_sums = col_sums
-        super().__init__(
-            grid,
-            ComboCondition(
-                RookCondition, BlockCondition, SandwichCondition(row_sums, col_sums)
-            ),
-        )
+        conditions = [
+            RookCondition,
+            BlockCondition,
+            SandwichCondition(row_sums, col_sums),
+        ]
+        if condition is not None:
+            conditions += [condition]
+        super().__init__(grid, ComboCondition(conditions))
 
     def possible_cols(self, grid: np.array, num: int, row: int) -> list:
         if 1 in grid[row, :] and 9 in grid[row, :]:
@@ -817,7 +878,7 @@ class SandwichSolver(SudokuSolver):
                 raise ValueError("No solution")
         result = self._solve_sandwich(grid, verbose=verbose)
         if result is None:
-            raise ValueError("No solution")
+            return
         else:
             if verbose:
                 self.print(result, override=True)
@@ -1104,7 +1165,7 @@ class ThermometerSolver(SudokuSolver):
     https://www.gmpuzzles.com/blog/sudoku-rules-and-info/thermo-sudoku-rules-and-info/
     """
 
-    def __init__(self, grid: np.array, paths: list):
+    def __init__(self, grid: np.array, paths: list, condition: SudokuCondition = None):
         """
         Parameters
         ----------
@@ -1112,6 +1173,8 @@ class ThermometerSolver(SudokuSolver):
             Grid representing puzzle, should be 9x9 array. Use 0 for unspecified entries
         paths: list of list of tuples
             List of list of coordinates that should have increasing numbers
+        condition: SudokuCondition
+            Extra condition to include
         """
         # initialize using standard ruleset
         def comb(x):
@@ -1119,12 +1182,14 @@ class ThermometerSolver(SudokuSolver):
             return min(length, 9 - length)
 
         self.paths = sorted(paths, key=comb)
-        super().__init__(
-            grid,
-            ComboCondition(RookCondition, BlockCondition, ThermometerCondition(paths)),
-        )
+        conditions = [RookCondition, BlockCondition, ThermometerCondition(paths)]
+        if condition is not None:
+            conditions += [condition]
+        super().__init__(grid, ComboCondition(conditions))
 
-    def solve(self, grid: np.ndarray = None, verbose: bool = True) -> np.ndarray:
+    def solve(
+        self, grid: np.ndarray = None, verbose: bool = True, *args, **kwargs
+    ) -> np.ndarray:
         """
         Recursively solve sudoku by filling the numbers used in the puzzle first, using
         backtracking and constraint programming
@@ -1141,14 +1206,19 @@ class ThermometerSolver(SudokuSolver):
         np.ndarray
             Filled Grid
         """
-        result = self._solve_thermometer(grid, verbose=verbose)
+        result = self._solve_thermometer(grid, *args, **kwargs, verbose=verbose)
         if result is None:
-            raise ValueError("No solution")
+            return
         else:
             return result
 
     def _solve_thermometer(
-        self, grid: np.ndarray = None, verbose: bool = True, possibilities_list=None
+        self,
+        grid: np.ndarray = None,
+        verbose: bool = True,
+        possibilities_list=None,
+        guess=True,
+        final_condition=None,
     ) -> np.ndarray:
         # Make sure we don't mutate the input
         if grid is None:
@@ -1169,7 +1239,13 @@ class ThermometerSolver(SudokuSolver):
                 if len(possibilities_list[row][col]) == 1:
                     grid_new = grid.copy()
                     grid_new[row, col] = possibilities_list[row][col][0]
-                    result = self._solve_thermometer(grid_new, possibilities_list)
+                    result = self._solve_thermometer(
+                        grid_new,
+                        possibilities_list=possibilities_list,
+                        verbose=verbose,
+                        guess=guess,
+                        final_condition=final_condition,
+                    )
                     if result is not None:
                         return result
                     else:
@@ -1177,7 +1253,7 @@ class ThermometerSolver(SudokuSolver):
                 elif len(possibilities_list[row][col]) == 0:
                     return
         # if we don't have much filled yet, do some branching if there are only 2 possibilities
-        if np.count_nonzero(grid) <= 15:
+        if guess and np.count_nonzero(grid) <= 15:
             for row in range(9):
                 for col in range(9):
                     if grid[row, col] > 0:
@@ -1191,7 +1267,11 @@ class ThermometerSolver(SudokuSolver):
                             grid_new = grid.copy()
                             grid_new[row, col] = num
                             result = self._solve_thermometer(
-                                grid_new, deepcopy(possibilities_list)
+                                grid_new,
+                                possibilities_list=possibilities_list,
+                                verbose=verbose,
+                                guess=guess,
+                                final_condition=final_condition,
                             )
                             if result is not None:
                                 return result
@@ -1213,7 +1293,13 @@ class ThermometerSolver(SudokuSolver):
                                 raise AssertionError
                 except AssertionError:
                     continue
-                result = self._solve_thermometer(grid_new)
+                result = self._solve_thermometer(
+                    grid_new,
+                    possibilities_list=possibilities_list,
+                    verbose=verbose,
+                    guess=guess,
+                    final_condition=final_condition,
+                )
                 if result is not None:
                     return result
                 else:
@@ -1221,8 +1307,45 @@ class ThermometerSolver(SudokuSolver):
                 return
             return
         # use std sudoku solver for speed because we already fulfilled thermometer conds
-        result = StandardSolver(grid)._solve_poss(verbose=verbose)
+        if final_condition is not None:
+            result = SudokuSolver(grid, condition=final_condition)._solve(
+                verbose=verbose
+            )
+        else:
+            result = StandardSolver(grid)._solve(verbose=verbose)
         if result is not None:
+            if verbose:
+                self.print(result, override=True)
             return result
         else:
             return
+
+
+class KillerCondition(SudokuCondition):
+    """Groups of cells with known sums"""
+
+    def __init__(self, boxes, sums):
+        """
+        Parameters
+        ----------
+        boxes: list
+            List of cell coordinates in the box
+        sums: list
+            Sums corresponding to the boxes
+        """
+        self.boxes = boxes
+        self.sums = sums
+
+    def test(self, grid: np.ndarray, num: int, row: int, col: int) -> bool:
+        for box, box_sum in zip(self.boxes, self.sums):
+            if (row, col) in box:
+                box_nums = np.array(
+                    [grid[cell] if cell != (row, col) else num for cell in box]
+                )
+                if (
+                    np.count_nonzero(box_nums) == len(box)
+                    and box_sum != box_nums.sum()
+                ):
+                    return False
+        return True
+
